@@ -38,32 +38,25 @@
  * - All cores enter the kernel.
  */
 
-#define BIT(x) (1 << (x))
+.equ LOCAL_CONTROL,		0x40000000
+.equ LOCAL_PRESCALER,		0x40000008
 
-#define LOCAL_CONTROL		0x40000000
-#define LOCAL_PRESCALER		0x40000008
+.equ OSC_FREQ,			19200000
 
-#define OSC_FREQ		19200000
+.equ SCR_RW,			(1 << 10)
+.equ SCR_HCE,			(1 << 8)
+.equ SCR_SMD,			(1 << 7)
+.equ SCR_RES1_5,		(1 << 5)
+.equ SCR_RES1_4,		(1 << 4)
+.equ SCR_NS,			(1 << 0)
+.equ SCR_VAL, (SCR_RW | SCR_HCE | SCR_SMD | SCR_RES1_5 | SCR_RES1_4 | SCR_NS)
 
-#define SCR_RW			BIT(10)
-#define SCR_HCE			BIT(8)
-#define SCR_SMD			BIT(7)
-#define SCR_RES1_5		BIT(5)
-#define SCR_RES1_4		BIT(4)
-#define SCR_NS			BIT(0)
-#define SCR_VAL \
-    (SCR_RW | SCR_HCE | SCR_SMD | SCR_RES1_5 | SCR_RES1_4 | SCR_NS)
+.equ ACTLR_VAL, ((1 << 0) | (1 << 1) | (1 << 4) | (1 << 5) | (1 << 6))
 
-#define ACTLR_VAL \
-	(BIT(0) | BIT(1) | BIT(4) | BIT(5) | BIT(6))
-
-#define CPUECTLR_EL1		S3_1_C15_C2_1
-#define CPUECTLR_EL1_SMPEN	BIT(6)
-
-#define L2CTLR_EL1		S3_1_C11_C0_2
+.equ CPUECTLR_EL1_SMPEN,	(1 << 6)
 
 /* Where the firmware loads kernel8.img (config.txt: kernel_address=0x80000) */
-#define KERNEL_ENTRY		0x80000
+.equ KERNEL_ENTRY,		0x80000
 
 .section .text.armstub
 .globl _start
@@ -73,20 +66,20 @@ _start:
 	 * Bit 9 clear: Increment by 1 (vs. 2).
 	 * Bit 8 clear: Timer source is 19.2MHz crystal (vs. APB).
 	 */
-	ldr x0, =LOCAL_CONTROL
+	ldr x0, l_local_control
 	str wzr, [x0]
 	/* LOCAL_PRESCALER; divide-by (0x80000000 / register_val) == 1 */
 	mov w1, #0x80000000
 	str w1, [x0, #(LOCAL_PRESCALER - LOCAL_CONTROL)]
 
 	/* Set L2 read/write cache latency to 3 */
-	mrs x0, L2CTLR_EL1
+	mrs x0, S3_1_C11_C0_2
 	mov x1, #0x22
 	orr x0, x0, x1
-	msr L2CTLR_EL1, x0
+	msr S3_1_C11_C0_2, x0
 
 	/* Set up CNTFRQ_EL0 */
-	ldr x0, =OSC_FREQ
+	ldr x0, l_osc_freq
 	msr CNTFRQ_EL0, x0
 
 	/* Set up CNTVOFF_EL2 */
@@ -106,13 +99,13 @@ _start:
 
 	/* Set SMPEN */
 	mov x0, #CPUECTLR_EL1_SMPEN
-	msr CPUECTLR_EL1, x0
+	msr S3_1_C15_C2_1, x0
 
 	/*
 	 * Set up SCTLR_EL2
 	 * All set bits below are res1. LE, no WXN/I/SA/C/A/M
 	 */
-	ldr x0, =0x30c50830
+	ldr x0, l_sctlr_el2_val
 	msr SCTLR_EL2, x0
 
 	/*
@@ -122,7 +115,15 @@ _start:
 	mov x1, #0
 	mov x2, #0
 	mov x3, #0
-	ldr x4, =KERNEL_ENTRY
+	ldr x4, l_kernel_entry
 	br x4
 
-.ltorg
+/* Literal pool (same values and order as the upstream GNU build). */
+l_local_control:
+	.xword LOCAL_CONTROL
+l_osc_freq:
+	.xword OSC_FREQ
+l_sctlr_el2_val:
+	.xword 0x30c50830
+l_kernel_entry:
+	.xword KERNEL_ENTRY

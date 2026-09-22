@@ -1,0 +1,5 @@
+[build]
+target = "aarch64-unknown-none-softfloat"
+
+[target.aarch64-unknown-none-softfloat]
+rustflags = ["-C", "target-cpu=cortex-a53", "-C", "relocation-model=pic"]

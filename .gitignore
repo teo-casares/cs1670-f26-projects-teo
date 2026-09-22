@@ -11,3 +11,8 @@
 
 compile_commands.json
 *.bin
+
+/target/
+__pycache__/
+printf-tests/target/
+scaffold-tests/target/

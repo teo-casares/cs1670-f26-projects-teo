@@ -1,0 +1,27 @@
+[package]
+name = "user-programs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "u_common"
+path = "lib/u_common.rs"
+
+[[bin]]
+name = "squares"
+path = "squares.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "pi"
+path = "pi.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "primecheck"
+path = "primecheck.rs"
+test = false
+bench = false

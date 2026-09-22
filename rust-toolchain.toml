@@ -1,0 +1,5 @@
+[toolchain]
+channel = "beta-2026-09-20"
+profile = "minimal"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = ["aarch64-unknown-none-softfloat"]

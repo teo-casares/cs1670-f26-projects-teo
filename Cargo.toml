@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["kernel", "user", "bootloader"]
+exclude = ["scaffold-tests", "printf-tests"]
+default-members = ["kernel"]
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+debug = true

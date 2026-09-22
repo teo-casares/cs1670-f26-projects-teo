@@ -1,8 +1,10 @@
-.PHONY: clean format
+.PHONY: all clean format help users check test test-printf test-log test-qemu test-qemu-pi test-suite armstub.bin
+
+.DEFAULT_GOAL := all
 
 HOST_OS = $(shell uname -s)
 HOST_ARCH = $(shell uname -m)
-TOOL_LDFLAGS :=
+HOST_TRIPLE = $(shell rustc -vV | sed -n 's/^host: //p')
 
 ifndef IN_CONTAINER
 ifneq ("$(wildcard /etc/image-version)","")
@@ -12,109 +14,88 @@ else
 endif
 endif
 
-# Try to infer the correct TOOLPREFIX if not set
-ifndef TOOLPREFIX
-ifeq ($(HOST_OS), Darwin)
-# MacOS
-TOOLPREFIX = aarch64-elf-
-TOOL_LDFLAGS += -Wl,-pie,--no-dynamic-linker
-else
-# Linux/Windows
-ifneq ($(HOST_ARCH), aarch64)
-TOOLPREFIX = aarch64-linux-gnu-
-endif
-endif
-endif
-
-
-GCC = $(TOOLPREFIX)gcc
-LD = $(TOOLPREFIX)ld
-OBJCOPY = $(TOOLPREFIX)objcopy
 PYTHON ?= python3
-
-MAKEDIR = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-IMGNAME = weenix-ubuntu24
-CONTNAME = weenix-container
-
 QEMU ?= qemu-system-aarch64
+TEST_TIMEOUT ?= 120
+MODE ?= batch
+TARGET = aarch64-unknown-none-softfloat
+TARGET_DIR = target/$(TARGET)/debug
 
-CFLAGS = -Wall -Wextra -Werror -g -std=gnu2x
-# Tell compiler to avoid automatically linking the C standard library and Linux/MacOS startup files
-CFLAGS += -nostdlib -nostartfiles -ffreestanding
-# Prevent compiler from using floating point and SIMD registers in kernel code
-CFLAGS += -mgeneral-regs-only
-
-# Modify the number of debug prints
-DEBUG_LVL ?= 0
-ifeq ($(DEBUG_LVL),0)
-    CFLAGS += -DDEBUG_LEVEL=0
-else ifeq ($(DEBUG_LVL),1)
-    CFLAGS += -DDEBUG_LEVEL=1
-else ifeq ($(DEBUG_LVL),2)
-    CFLAGS += -DDEBUG_LEVEL=2
-else
-    $(error Invalid DEBUG_LEVEL value: $(DEBUG_LEVEL). Must be 0, 1 or 2)
-endif
-
-
-ASMFLAGS = -g
-
+# LLVM binutils shipped with the pinned Rust toolchain (llvm-tools component).
+LLVM_BIN = $(shell rustc --print sysroot)/lib/rustlib/$(HOST_TRIPLE)/bin
+OBJCOPY = $(LLVM_BIN)/llvm-objcopy
 
 K = kernel
 U = user
-ULIB = user/lib
-
-# Find all the source files for user code
-USRCS  := $(wildcard $(U)/*.c)
-UELFS  := $(USRCS:.c=.elf)
-UOBJS  := $(patsubst $(U)/%.elf,$(K)/%_kproc.o,$(UELFS))
-
-ULIBSRCS := $(wildcard $(ULIB)/*.c)
-ULIBOBJS := $(ULIBSRCS:.c=.o)
-UHDRS    := $(wildcard $(U)/*.h) $(wildcard $(ULIB)/*.h)
-
-# Find all the source files for kernel code
-KSRCS  := $(wildcard $(K)/*.c $(K)/drivers/*.c)
-KASM   := $(wildcard $(K)/*.S)
-KOBJS  := $(KASM:%.S=%.o) $(KSRCS:%.c=%.o)
-
-DEPSDIR = .deps
-DEPS := $(shell find $(DEPSDIR) -name '*.d' 2>/dev/null)
 
 all: kernel8.img armstub.bin
 
-clean:
-	rm -rf kernel8.img
-	rm -rf $(K)/*.elf
-	find $(K) -name *.o -delete
-	rm -rf $(DEPSDIR)
-	rm -f $(UOBJS)
-	rm -f $(U)/u_klib.h
-	rm -f armstub.bin
-
-format:
-	find . -name *.[c,h] | xargs clang-format -i
-
-ifneq ($(DEPS),)
-include $(DEPS)
-endif
+help:
+	@printf '%s\n' \
+	  "Project 1 (Rust scaffold) targets:" \
+	  "  make users        build the user programs (user/*.elf)" \
+	  "  make check        cargo check --workspace (no kernel link)" \
+	  "  make test         host-side scaffold tests (ELF loader, pi port, oracle)" \
+	  "  make test-printf  hosted printf test (fails until Quest 2)" \
+	  "  make test-qemu    QEMU batch-output check (needs Quest 3 done)" \
+	  "  make test-qemu-pi QEMU pi serial-output check (needs Quest 2 done)" \
+	  "  make test-log LOG=<file> [MODE=batch|pi]  check a captured log" \
+	  "  make test-suite   test + test-printf + test-qemu" \
+	  "  make kernel8.img  link the kernel (fails until _start exists)" \
+	  "  make armstub.bin  build the bootloader blob" \
+	  "  make qemu         run kernel8.img in QEMU (see qemu.mk)" \
+	  "  make format       cargo fmt --all" \
+	  "  make clean        remove generated artifacts"
 
 ###################
-# kernel files
+# user programs
 ###################
 
-$(K)/%.o: $(K)/%.c
-	mkdir -p $(@D) $(DEPSDIR)/$(K)/$(*D)
-	$(GCC) $(CFLAGS) -MMD -MF $(DEPSDIR)/$(K)/$*.d -Ikernel -c $< -o $@
+users:
+	cargo build -p user-programs
+	cp $(TARGET_DIR)/squares   $(U)/squares.elf
+	cp $(TARGET_DIR)/pi        $(U)/pi.elf
+	cp $(TARGET_DIR)/primecheck $(U)/primecheck.elf
 
-$(K)/%.o: $(K)/%.S
-	mkdir -p $(DEPSDIR)/$(K)/$(*D)
-	$(GCC) $(ASMFLAGS) -MMD -MF $(DEPSDIR)/$(K)/$*.d -c $< -o $@
+###################
+# checks and tests
+###################
 
-kernel8.img: $(KOBJS) $(UOBJS)
-	$(LD) -T kernel/linker.ld -o $(K)/kernel8.elf $(KOBJS) $(UOBJS)
-	$(OBJCOPY) $(K)/kernel8.elf -O binary kernel8.img
+check: users
+	cargo check --workspace
 
+test: users
+	cargo test --manifest-path scaffold-tests/Cargo.toml --target $(HOST_TRIPLE)
+	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
+
+# Hosted printf formatter test. Runs the REAL kernel/printf.rs against a
+# capture-only mock UART. Expected to FAIL until Quest 2 is implemented.
+test-printf: users
+	cargo test --manifest-path printf-tests/Cargo.toml --target $(HOST_TRIPLE) -- --test-threads=1
+
+# Offline check of a captured serial/QEMU log. Reads only the provided file;
+# passing does not prove the log came from real hardware.
+test-log:
+	@test -n "$(LOG)" || { echo "usage: make test-log LOG=<serial/qemu log file> [MODE=batch|pi]"; exit 2; }
+	$(PYTHON) scripts/check_output.py --log "$(LOG)" --mode "$(MODE)"
+
+# Boot the kernel in QEMU and apply the batch/pi output oracle to the captured
+# serial stream. Expected to fail until _start (and the rest) are implemented.
+test-qemu: kernel8.img
+	$(PYTHON) scripts/check_output.py --qemu --mode batch --timeout $(TEST_TIMEOUT)
+
+test-qemu-pi: kernel8.img
+	$(PYTHON) scripts/check_output.py --qemu --mode pi --timeout $(TEST_TIMEOUT)
+
+test-suite: test test-printf test-qemu
+
+###################
+# kernel image
+###################
+
+kernel8.img: users
+	cargo build -p kernel
+	$(OBJCOPY) $(TARGET_DIR)/kernel -O binary $@
 
 ###################
 # bootloader
@@ -123,46 +104,28 @@ kernel8.img: $(KOBJS) $(UOBJS)
 # Bootloader for the Raspberry Pi 3 that sets up tick counter and other hardware configuration.
 # The firmware loads this at address 0x0, and it eventually hands over control to the code in
 # boot.S.
-armstub.bin: bootloader/armstub.S
-	$(GCC) $(ASMFLAGS) -c $< -o bootloader/armstub.o
-	# Force linker to put the .text segment at address 0x0
-	$(LD) -Ttext=0x0 -o bootloader/armstub.elf bootloader/armstub.o
-	$(OBJCOPY) bootloader/armstub.elf -O binary $@
-
+armstub.bin:
+	cargo build -p armstub
+	$(OBJCOPY) $(TARGET_DIR)/armstub -O binary $@
 
 ###################
-# user programs
+# housekeeping
 ###################
 
-# Generate trampoline header file
-$(U)/u_klib.h:
-	$(PYTHON) $(U)/gen_klib_header.py > $@
+format:
+	cargo fmt --all
+	cd scaffold-tests && cargo fmt --all
+	cd printf-tests && cargo fmt --all
 
-# Compile user library files into .o files
-$(ULIB)/%.o: $(ULIB)/%.c $(UHDRS) $(U)/u_klib.h $(BUILDSTAMP)
-	mkdir -p $(DEPSDIR)/$(ULIB)
-	$(GCC) $(CFLAGS) -I$(U) -I$(ULIB) -MMD -MF $(DEPSDIR)/$(ULIB)/$*.d -c $< -o $@
-
-# Compile user programs into .elf files (ELF executables)
-# -e main: set entry point to 'main'
-# -I$(U) -I$(ULIB): include user/ and user/lib directories for headers
-# -static: disable dynamic linking
-# -static-pie: create a position-independent executable
-# -Wl passes options to the linker, specifically:
-#  -nmagic: avoid page alignment of segments in ELF executables (ARM64 requires 64kB alignment, which wastes a lot of space)
-#  -T $(U)/procs.ld: use custom linker script to define memory layout
-$(U)/%.elf: $(U)/%.c $(ULIBOBJS) $(U)/u_klib.h
-	$(GCC) $(CFLAGS) -e main -I$(U) -I$(ULIB) -static-pie $(TOOL_LDFLAGS) -Wl,-nmagic,-T,$(U)/procs.ld -o $@ $^
-
-# Turn ELF executable into an object file, so that we can link it into the kernel executable.
-$(K)/%_kproc.o: $(U)/%.elf
-	$(OBJCOPY) -I binary $< -O elf64-littleaarch64 -B aarch64 $@ --rename-section .data=.elf_executables,alloc,load,readonly,data,contents
-
+clean:
+	rm -f kernel8.img armstub.bin
+	rm -f $(U)/squares.elf $(U)/pi.elf $(U)/primecheck.elf
+	cargo clean
+	cd scaffold-tests && cargo clean
+	cd printf-tests && cargo clean
 
 ###################
 # QEMU
 ###################
 
 include qemu.mk
-
-
