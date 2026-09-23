@@ -119,4 +119,137 @@ fn printf_formatting() {
     for fmt in [c"%", c"%l", c"%q"] {
         unsafe { printf::printf(fmt.as_ptr()) };
     }
+
+    macro_rules! check {
+        ($expected:expr, $call:expr) => {{
+            reset();
+            let count = unsafe { $call };
+            let output = take();
+            assert_eq!(output.as_slice(), $expected);
+            assert_eq!(count as usize, output.len());
+        }};
+    }
+    check!(b"", printf::printf(c"".as_ptr()));
+    check!(b"", printf::printf(core::ptr::null()));
+    check!(
+        b"plain % text\r\n",
+        printf::printf(c"plain %% text\r\n".as_ptr())
+    );
+    check!(b"\n\r\n", printf::printf(c"\n\r\n".as_ptr()));
+    check!(b"A\0B", printf::printf(c"A%cB".as_ptr(), 0 as c_int));
+    check!(
+        b"[] hello (null)",
+        printf::printf(
+            c"[%s] %s %s".as_ptr(),
+            c"".as_ptr(),
+            c"hello".as_ptr(),
+            core::ptr::null::<c_char>()
+        )
+    );
+    check!(
+        b"100% %d\n",
+        printf::printf(c"%s".as_ptr(), c"100% %d\n".as_ptr())
+    );
+    check!(
+        b"0 9 10 123 4294967295",
+        printf::printf(
+            c"%u %u %u %u %u".as_ptr(),
+            0 as c_uint,
+            9 as c_uint,
+            10 as c_uint,
+            123 as c_uint,
+            c_uint::MAX
+        )
+    );
+    check!(
+        b"-2147483648 -1 0 2147483647",
+        printf::printf(
+            c"%d %d %d %d".as_ptr(),
+            c_int::MIN,
+            -1 as c_int,
+            0 as c_int,
+            c_int::MAX
+        )
+    );
+    let long_expected = format!("{} {} 0 0 {}", c_long::MIN, c_long::MAX, c_ulong::MAX);
+    check!(
+        long_expected.as_bytes(),
+        printf::printf(
+            c"%ld %ld %ld %lu %lu".as_ptr(),
+            c_long::MIN,
+            c_long::MAX,
+            0 as c_long,
+            0 as c_ulong,
+            c_ulong::MAX
+        )
+    );
+    check!(
+        b"00000000 000000ab ffffffff 0000000000000000",
+        printf::printf(
+            c"%x %x %x %lx".as_ptr(),
+            0 as c_uint,
+            0xab as c_uint,
+            c_uint::MAX,
+            0 as c_ulong
+        )
+    );
+    let hex_expected = format!("{:016x}", c_ulong::MAX);
+    check!(
+        hex_expected.as_bytes(),
+        printf::printf(c"%lx".as_ptr(), c_ulong::MAX)
+    );
+    let pointer_expected = format!(
+        "0x{:0width$x} 0x{:0width$x}",
+        0usize,
+        usize::MAX,
+        width = core::mem::size_of::<usize>() * 2
+    );
+    check!(
+        pointer_expected.as_bytes(),
+        printf::printf(
+            c"%p %p".as_ptr(),
+            core::ptr::null::<c_void>(),
+            usize::MAX as *const c_void
+        )
+    );
+    for fmt in [
+        c"%", c"%l", c"%q", c"%ls", c"%ll", c"%l%", c"abc%", c"abc%l",
+    ] {
+        check!(fmt.to_bytes(), printf::printf(fmt.as_ptr()));
+    }
+    check!(
+        b"%q:7 %ls:8 %ll:9",
+        printf::printf(
+            c"%q:%u %ls:%u %ll:%u".as_ptr(),
+            7 as c_uint,
+            8 as c_uint,
+            9 as c_uint
+        )
+    );
+    check!(b"%A%", printf::printf(c"%%%c%%".as_ptr(), b'A' as c_int));
+    check!(
+        b"-42 forwarded",
+        via_vprintf(c"%d %s".as_ptr(), -42 as c_int, c"forwarded".as_ptr())
+    );
+    let mixed_expected = format!(
+        "-1 2 -3 4 000000ab 00000000000000cd Z ok 0x{:0width$x} % 9",
+        0x1234usize,
+        width = core::mem::size_of::<usize>() * 2
+    );
+    check!(
+        mixed_expected.as_bytes(),
+        via_vprintf(
+            c"%d %u %ld %lu %x %lx %c %s %p %% %d".as_ptr(),
+            -1 as c_int,
+            2 as c_uint,
+            -3 as c_long,
+            4 as c_ulong,
+            0xab as c_uint,
+            0xcd as c_ulong,
+            b'Z' as c_int,
+            c"ok".as_ptr(),
+            0x1234usize as *const c_void,
+            9 as c_int
+        )
+    );
 }

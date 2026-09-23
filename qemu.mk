@@ -45,7 +45,7 @@ GDB_WHERE = $(if $(filter 1,$(IN_CONTAINER)), in your container,)
 GDB_BANNER = printf '%s\n' \
 	"** ***** Starting QEMU in GDB mode *****" \
 	"** To continue, open a new terminal$(GDB_WHERE) and then" \
-	"** run '$(GDB_CMD)' to get started!"
+	"** run '$(GDB_CMD) -nx -x .gdbinit' from the project directory to get started!"
 
 
 # Default QEMU target:  disable display mode and run directly in terminal

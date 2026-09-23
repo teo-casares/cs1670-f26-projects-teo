@@ -1,4 +1,4 @@
-.PHONY: all clean format help users check test test-printf test-log test-qemu test-qemu-pi test-suite armstub.bin
+.PHONY: all clean format help users check test test-printf test-log test-qemu test-qemu-pi test-suite armstub.bin inspect-users inspect-kernel
 
 .DEFAULT_GOAL := all
 
@@ -24,6 +24,8 @@ TARGET_DIR = target/$(TARGET)/debug
 # LLVM binutils shipped with the pinned Rust toolchain (llvm-tools component).
 LLVM_BIN = $(shell rustc --print sysroot)/lib/rustlib/$(HOST_TRIPLE)/bin
 OBJCOPY = $(LLVM_BIN)/llvm-objcopy
+READOBJ = $(LLVM_BIN)/llvm-readobj
+NM = $(LLVM_BIN)/llvm-nm
 
 K = kernel
 U = user
@@ -41,6 +43,8 @@ help:
 	  "  make test-qemu-pi QEMU pi serial-output check (needs Quest 2 done)" \
 	  "  make test-log LOG=<file> [MODE=batch|pi]  check a captured log" \
 	  "  make test-suite   test + test-printf + test-qemu" \
+	  "  make inspect-users  dump ELF headers of user/*.elf (works now)" \
+	  "  make inspect-kernel dump kernel ELF headers/symbols (needs Quest 1)" \
 	  "  make kernel8.img  link the kernel (fails until _start exists)" \
 	  "  make armstub.bin  build the bootloader blob" \
 	  "  make qemu         run kernel8.img in QEMU (see qemu.mk)" \
@@ -88,6 +92,17 @@ test-qemu-pi: kernel8.img
 	$(PYTHON) scripts/check_output.py --qemu --mode pi --timeout $(TEST_TIMEOUT)
 
 test-suite: test test-printf test-qemu
+
+###################
+# inspection
+###################
+
+inspect-users: users
+	"$(READOBJ)" --file-headers --program-headers $(U)/squares.elf $(U)/pi.elf $(U)/primecheck.elf
+
+inspect-kernel: kernel8.img
+	"$(READOBJ)" --file-headers --program-headers --sections $(TARGET_DIR)/kernel
+	"$(NM)" --defined-only --numeric-sort $(TARGET_DIR)/kernel
 
 ###################
 # kernel image

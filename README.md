@@ -14,6 +14,8 @@ The assignment write-up, translated to Rust, is in
 
 ### Layout
 
+- `docs/` — Rust handout and blank editable `memlayout-physical.svg`;
+  draw your own diagram and later save a PDF copy as `memlayout-physical.pdf`
 - `kernel/` — kernel crate (`kernel.rs`, `boot.S`, `mm.S`, `linker.ld`,
   `memlayout.rs`, `drivers/`, `utils.rs`, `printf.rs`, `pi.rs`, `elf.rs`,
   `init.rs`)
@@ -41,20 +43,64 @@ rustup toolchain install beta-2026-09-20 --profile minimal \
 QEMU (`qemu-system-aarch64`), `make`, `python3`, and GDB are needed for
 `make qemu`/`make qemu-gdb` and the test targets (plain `gdb` if it supports
 AArch64, `gdb-multiarch` otherwise; connect with `gdb -nx -x .gdbinit`).
-The course Docker container has the cross GCC/GDB toolchain but **no Rust**;
-run the Rust build on the host (or install rustup inside your container).
+
+The base course Docker image does **not** include Rust, and the host and the
+container are separate installs — rustup on the host does not exist inside
+`cs1670-container` and vice versa (never copy `~/.cargo`/`~/.rustup` between
+them). In this setup rustup is installed into the container user's home
+(`~/.cargo`, `~/.rustup`), which is bind-mounted from
+`/home/teo/cs1670/container-home`, so it persists across container restarts.
+On a *fresh* container/home there is no Rust: install it per
+<https://rustup.rs> and then run the pinned toolchain command above.
 
 Build order matters: run `make users` first — it produces `user/*.elf`,
 which the kernel embeds and the host tests read. Plain `cargo build` does
 not refresh those artifacts.
 
-Quick start (path shown for this machine; adjust for your own host):
+Quick start on the host (path shown for this machine; adjust for yours):
 
 ```sh
 cd /home/teo/cs1670/container-home/projects
 make check
 make test
 ```
+
+Container workflow — it is **one shared bind-mounted checkout** (the same
+files appear at both paths) with **separate toolchains** on each side.
+`./run-container` is a script in the parent directory, not a PATH command —
+run it from `/home/teo/cs1670`.
+
+Host terminal 1 (launches/attaches the container):
+
+```sh
+cd /home/teo/cs1670
+./run-container
+```
+
+Inside the container shell (an already-open shell needs one manual
+`source`; new login shells pick it up from `~/.bashrc` automatically):
+
+```sh
+source "$HOME/.cargo/env"   # only if cargo isn't found yet
+cd ~/projects
+make check
+make test
+```
+
+After Quest 1, for `make qemu-gdb` you need a second container shell —
+open host terminal 2 and repeat `./run-container` (it attaches to the same
+running container), then:
+
+```sh
+source "$HOME/.cargo/env"   # same one-time fix if needed
+cd ~/projects
+gdb-multiarch -nx -x .gdbinit
+```
+
+The container's plain `gdb` is host-architecture only; use `gdb-multiarch`.
+QEMU listens on GDB port 1234 by default — run `make qemu-gdb` and the
+debugger in the *same* environment (both inside the container, or both on
+the host).
 
 ### Commands
 

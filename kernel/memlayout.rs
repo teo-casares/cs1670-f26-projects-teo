@@ -13,7 +13,10 @@
 // Location of the initial kernel stack in physical memory.
 // Must be 16-byte aligned.
 // pub const INITIAL_KERNEL_STACK: usize = YOUR_CHOSEN_VALUE;
-pub const INITIAL_KERNEL_STACK: usize = 0;
+pub const INITIAL_KERNEL_STACK: usize = 0x3A00_0000;
+pub const PROC_START: usize = 0x02AB_1000;
+pub const PROC_SIZE: usize = 0x0640_0000;
+
 
 // Peripherals are mapped starting at 0x3F00'0000, giving 1 MB for I/O memory
 // Note that the documentation lists addresses starting at 0x7E00'0000. This is
@@ -30,6 +33,5 @@ pub const PERIPHERALS_LIMIT: usize = 0x3FFFFFFF;
 // actual machine code. User programs can then call kernel functions by simply
 // following those pointers (even though they weren't compiled together with
 // the kernel).
-// TODO: you'll need to change F_BASE in Quest 3 of Project 1.
-pub const F_BASE: usize = 0;
+pub const F_BASE: usize = 0x08FB_06B0;
 pub const F_VPRINTF: usize = F_BASE.wrapping_sub(core::mem::size_of::<usize>());

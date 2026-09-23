@@ -94,7 +94,7 @@ pub const PI_DIGITS: usize = 1000;
 
 /* Set to true to print the result, false to compute silently (value stays in
  * memory). */
-pub const PI_PRINT: bool = false;
+pub const PI_PRINT: bool = true;
 /* How many digits to print per line. */
 pub const LINE_LEN: usize = 134;
 

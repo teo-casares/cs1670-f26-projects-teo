@@ -21,6 +21,9 @@ course page is https://csci1670.github.io/docs/project1/ (CC BY 4.0).
   intended state of the scaffold; do not add a `_start` to silence it.
 - `make armstub.bin` — must stay byte-identical to the upstream GCC build
   (`llvm-objcopy -O binary bootloader/armstub.elf` is the reference).
+- `make inspect-users` / `make inspect-kernel` — `llvm-readobj`/`llvm-nm`
+  dumps of the user ELFs (works now) and the linked kernel (needs Quest 1).
+  The pinned toolchain ships `llvm-readobj`, not `llvm-readelf`.
 - `make test-qemu*` / `make test-log` — post-boot checks via
   `scripts/check_output.py`, a local scaffold oracle authored for this Rust
   port (not official course tests — do not edit pass/fail logic).
@@ -53,3 +56,29 @@ course page is https://csci1670.github.io/docs/project1/ (CC BY 4.0).
 - `user/procs.ld` links PIE at vaddr 0 with `PT_LOAD`/`PT_DYNAMIC`; the
   loader in `kernel/elf.rs` copies `PT_LOAD`, zeros `bss`, and applies
   `R_AARCH64_RELATIVE`.
+
+## Runtime notes (learned)
+
+- Host and `cs1670-container` are separate environments sharing the repo via
+  bind mount: host path `/home/teo/cs1670/container-home/projects` ==
+  container `~/projects` (user `cs1670-user`, uid/gid 1000). Do not copy
+  toolchains between them.
+- Rust lives in the container user's home (`~/.cargo`, `~/.rustup`;
+  `~/.bashrc` sources `~/.cargo/env` for interactive shells). For
+  non-interactive checks:
+  `docker exec -u cs1670-user -w /home/cs1670-user/projects cs1670-container sh -lc '. "$HOME/.cargo/env"; make check && make test'`
+- `*/build.rs` pass workspace-root-relative `-T` linker script paths on
+  purpose: rustc runs from the workspace root, and absolute
+  `CARGO_MANIFEST_DIR` paths baked into the shared `target/` cache break
+  whichever side (host vs container) did not produce them. Keep it relative.
+- Container has `qemu-system-aarch64`, `gdb-multiarch`, `make`, `python3`,
+  `gcc` — but no `aarch64-none-elf-gdb`; use `gdb-multiarch -nx -x .gdbinit`.
+- Clean-room verification recipe: copy the source (excluding `target/`,
+  `user/*.elf`, caches) to a scratch dir under the bind-mounted home, then
+  in the container `make clean && make check && make test && make
+  armstub.bin && make inspect-users` — proves the tree builds from nothing.
+- Hardware boundary: never flash/format SD cards, open serial devices, or
+  run hardware operations for the user — the SD/`config.txt`/UART steps in
+  the handout are manual student/course tasks.
+- Reminder: do not complete the student exercises (boot, UART, printf,
+  kernel_main/init) while "fixing" anything — see task boundaries above.

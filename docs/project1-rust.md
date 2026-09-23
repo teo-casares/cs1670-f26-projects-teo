@@ -66,15 +66,25 @@ rustup toolchain install beta-2026-09-20 --profile minimal \
 ```
 
 You also need `qemu-system-aarch64`, `make`, `python3`, and GDB (plain `gdb`
-if it has AArch64 support, `gdb-multiarch` otherwise). The course Docker
-container provides the cross GCC/GDB toolchain but **not** Rust; run
-`cargo`/`make` on the host, or install rustup inside your own container (do
-not modify the shared image).
+if it has AArch64 support, `gdb-multiarch` otherwise).
+
+You can work **on the host or inside the course container** — one shared
+checkout is visible at different paths, with separate toolchain installs:
+
+- host: `/home/teo/cs1670/container-home/projects`
+- inside `cs1670-container` (as `cs1670-user`): `~/projects`
+
+The base course image ships without Rust; in this setup rustup is installed
+in the container user's bind-mounted home (`~/.cargo`, `~/.rustup`), so it
+survives container restarts. An already-open container shell needs
+`source "$HOME/.cargo/env"` once; new login shells get it from `~/.bashrc`.
+On a fresh container/home, install rustup per <https://rustup.rs> and then
+the pinned toolchain command above — see `README.md` for details.
 
 Quick start on this machine (adjust the path on your own host):
 
 ```sh
-cd /home/teo/cs1670/container-home/projects   # the nested projects repo root
+cd /home/teo/cs1670/container-home/projects   # or: cd ~/projects in the container
 rustup toolchain install beta-2026-09-20 --profile minimal \
   -c rustfmt -c clippy -c llvm-tools -t aarch64-unknown-none-softfloat
 make users      # build user/*.elf first — required before kernel/test builds
@@ -140,6 +150,12 @@ nothing compiles them.
   log you captured yourself (QEMU or serial). It only reads the file; it does
   **not** prove the log came from real hardware, validate UART framing, or
   attest registers/electrical setup.
+- `make inspect-users` — dumps ELF file/program headers of `user/*.elf`
+  (entry point, `PT_LOAD`/`PT_DYNAMIC`, `p_vaddr`, `p_memsz`, `p_align`).
+  Works now — use it to size your program region in Quest 3.
+- `make inspect-kernel` — dumps the linked kernel ELF's headers, sections,
+  and sorted symbols (`bss_begin`/`bss_end`, `elf_executables_end`, …).
+  Needs Quest 1 (it links `kernel8.img` first).
 - `make test-suite` — `test` + `test-printf` + `test-qemu`.
 - `make kernel8.img` — links the kernel and produces the image. **Expected to
   fail** with `Quest 1: implement _start in kernel/boot.S` until Quest 1.
@@ -149,6 +165,30 @@ nothing compiles them.
 Nothing in this scaffold can boot yet: `_start`, the UART driver, the printf
 parser, `kernel_main`, and the program-loading `init` are all deliberately
 missing. No test can pass "end-to-end" on the untouched scaffold.
+
+### What works when
+
+| Stage | Command | Expected outcome |
+|---|---|---|
+| Now (untouched scaffold) | `make check`, `make test`, `make armstub.bin`, `make inspect-users` | **PASS** |
+| Now | `make kernel8.img`, `make inspect-kernel` | **FAIL**: `Quest 1: implement _start in kernel/boot.S` — intentional |
+| Now | `make test-printf` | **FAIL** at the `vprintf` `todo!()` — intentional until Quest 2 |
+| After Q1 | `make kernel8.img`, `make inspect-kernel`, `make qemu`, `make qemu-gdb` | Link + boot to your `pi_main`; verify in GDB |
+| After Q2 | `make test-printf`, `make test-qemu-pi`, `make test-log LOG=path/to/capture.log MODE=pi` | printf tests pass; pi digits over serial (Quest 2 check — *not* a substitute for the Q1 GDB checks) |
+| After Q3 | `make test-qemu`, `make test-log LOG=path/to/capture.log MODE=batch` | Batch oracle: greeting, ordered programs, 100 squares, 1,001 digits, `7919` |
+| On real Pi (1690/2670) | `make all` produces `kernel8.img` + `armstub.bin`, then the manual SD/UART procedure below | Needs Q1–Q3 done **and** real hardware validation — see the hardware checklist |
+
+Expected noise: ~57 `dead_code` warnings from `cargo check`/`build` are
+normal on the scaffold — helpers are unused until your code calls them. Do
+not delete helpers to silence the warnings.
+
+QEMU notes: quit with `Ctrl-a` then `x` (pressed in sequence); `Ctrl-a`
+then `c` toggles the QEMU monitor. `make kill` kills *all* of your user's
+QEMU processes — course-provided escape hatch, use only if a QEMU is stuck;
+it is not part of the normal flow. The GDB stub listens on port 1234 and
+must be reached from the same environment where QEMU runs (both terminals
+inside the container, or both on the host). The GDB connection is a debug
+transport, not UART access — real-Pi output goes over the serial cable.
 
 ## Background
 
@@ -213,6 +253,13 @@ hand in `docs/memlayout-physical.pdf`. Update it as you pick
 `INITIAL_KERNEL_STACK` (Quest 1), `F_BASE` (Quest 3), and program load
 addresses.
 
+A blank editable canvas is provided at
+[`memlayout-physical.svg`](memlayout-physical.svg). Open it in Inkscape,
+draw your own diagram, and save the SVG as your working source. When the
+final diagram is complete, use **Save a Copy** and select PDF to create
+`docs/memlayout-physical.pdf`; keep the SVG for later edits. The blank SVG
+is not the finished submission.
+
 > **AI use/coding: NOT allowed** — the point is to develop a mental image
 > of your OS's memory layout.
 
@@ -255,7 +302,9 @@ linker keeps `.text.boot` first at `0x80000` via `KEEP(*(.text.boot))`.
   `Quest 1: implement _start in kernel/boot.S`).
 - `make qemu-gdb`, then `gdb -nx -x .gdbinit` in a second terminal (the
   `-nx -x` flags load this repo's `.gdbinit`, which connects to QEMU and
-  loads the kernel symbols — no global GDB config edits needed). Set
+  loads the kernel symbols — no global GDB config edits needed). Inside the
+  course container use `gdb-multiarch -nx -x .gdbinit` (its plain `gdb`
+  lacks AArch64 support). Set
   `b _start`, `si` through your code, break before `bl pi_main`; also
   `b rust_begin_unwind` is a useful safety net.
 - Manual checklist: only core 0 does the compute (other cores parked), `sp`
@@ -417,17 +466,20 @@ file, and be exclusive, valid, initialized `u8` memory while the program
 runs — don't mutate or reload it until the program returns.
 
 > **Size matters:** the supplied `user/pi.elf`'s writable `PT_LOAD` spans
-> ~28 KiB (`memsz` ≈ 0x6E60; check `llvm-readelf -l user/*.elf`). An
-> "illustrative" 16 KiB program slot is **not** enough. Read each ELF's
-> program headers and size your region from the actual artifacts, then put
-> it on your memory diagram.
+> ~28 KiB (`memsz` ≈ 0x6E60 — run `make inspect-users` to see each ELF's
+> program headers). An "illustrative" 16 KiB program slot is **not** enough.
+> Your `dest` capacity must cover `max(p_vaddr + p_memsz)` over all
+> `PT_LOAD`s and its base must satisfy the largest `p_align`; size your
+> region from the actual artifacts, then put it on your memory diagram.
 >
 > Relatedly, the `kernel_end` linker symbol is placed *before* the embedded
 > user images: the full kernel footprint runs through
 > `elf_executables_end` and includes the user ELFs' debug bytes — well over
 > a casual ~1 MiB estimate. Inspect the actual symbols and image size
-> (`llvm-readelf -s`, `ls -l kernel8.img`) before placing anything after
+> (`make inspect-kernel`, `ls -l kernel8.img`) before placing anything after
 > the kernel; never assume `kernel_end` is the end of the kernel image.
+> Consider this already in Quest 1 when planning where the stack goes — the
+> embedded images make the kernel far bigger than its code suggests.
 
 How user programs reach `printf`: `user/lib/u_common.rs` dereferences the
 function pointer stored at `F_VPRINTF` (`F_BASE - size_of::<usize>()`, both
@@ -510,7 +562,83 @@ grader and not replacements for the server's checks.
 
 Your code must work on the **real Raspberry Pi 3B/3B+** (not 4/5). Nothing
 in this scaffold touches hardware, disks, or SD cards automatically — the
-hardware path stays manual:
+hardware path stays manual. We have not attached or inspected a physical Pi
+or SD card; the procedure below is a vendor/repo-backed setup checklist,
+not a hardware-tested promise. Remaining prerequisites are a course-approved
+Pi 3 boot/firmware SD card, your completed boot code, and the real UART
+test — all noted inline.
+
+**a. SD card.** Start with a course-approved Pi 3 boot/firmware SD card —
+you need the *matching* firmware files (`bootcode.bin`, `start.elf`/`fixup`
+pair, device trees, …), not just our two outputs. Back up the card's
+existing files and verify you are operating on the correct device before
+touching anything. The Alpine/Linux seminar demo image is a different thing
+and does not prove your kernel works. If your card is unprovisioned, get a
+known-good course firmware card/instructions from staff first. This
+handout deliberately gives no `dd`/format commands.
+
+**b. Build outputs.** After your code builds, run `make all` (container
+`~/projects` or host repo root) — it produces **both** `kernel8.img` and
+`armstub.bin`. `kernel8.img` is a raw kernel binary, **not** a partitioned
+disk image: do not feed it to Raspberry Pi Imager or `dd` as a whole-disk
+image. The firmware expects these as *files on the boot (FAT) partition*.
+Build outputs are visible on the host via the bind mount; copy them using
+host SD-mount/file tools (the container needs no privileged USB access).
+Copy these two project files only after backup/safe identification — exact
+copy commands are left to you since mount paths vary.
+
+**c. `config.txt`.** Review the boot partition's `config.txt` for the
+boot contract required by this scaffold (advisory settings, not a complete
+firmware image or a claim about your card's current contents):
+
+```ini
+arm_64bit=1
+kernel=kernel8.img
+kernel_address=0x80000
+armstub=armstub.bin
+init_uart_clock=48000000
+```
+
+These are the *provided firmware constants* — `kernel_address=0x80000` and
+`armstub` naming match the upstream scaffold (the armstub comment's
+`KERNEL_ENTRY` is `0x80000`), not student layout choices. `arm_64bit=1`
+boots AArch64; `init_uart_clock=48000000` is the documented default UART
+clock that the 48 MHz divisor math assumes. Preserve whatever
+course-specific settings your card already has; conditional filters,
+`os_prefix`, `kernel_old`, initramfs, or Linux-oriented settings require
+the course card's own instructions — do not blindly append a block. Do not
+add Linux device-tree overlays unless the course requires them. And make
+sure the provided `armstub` is actually selected: a default firmware armstub
+substitution changes the core/EL boot contract.
+
+**d. Wiring.** Safely eject the card. Keep the Pi unpowered while wiring.
+Use a **3.3 V TTL** adapter only — never RS-232 voltage levels — and do not
+connect the adapter's power wire when the Pi has its own supply. Common
+ground plus crossed TX/RX per the course rules: physical pin 6 = GND,
+pin 8 (Pi TX) → adapter RX, pin 10 (Pi RX) → adapter TX. Console:
+**115200 8N1**. CTS flow-control requirements are unchanged; the three-wire
+wiring above is not a proof of CTS — follow the course UART settings test /
+hardware validation rather than guessing extra wiring.
+
+**e. Serial capture.** Run the terminal on the **host** (the container has
+no USB passthrough unless you configure one). Identify the actual serial
+device yourself — a stable path under `/dev/serial/by-id/…` is preferable —
+e.g. `screen /dev/ttyUSB0 115200` (**replace with your real device**;
+`screen` may not be installed — use an installed serial terminal, or install
+one on your host if needed). Enable the terminal's log capture and
+start it *before* powering the Pi. Then evaluate the capture on the host or
+copy the log into the project tree and run
+`make test-log LOG=<your file> MODE=pi` (or `batch`). Permission-denied or
+missing device: check your user's permissions/groups — don't assume `sudo`.
+We do not open or reset serial lines automatically.
+
+**f. Reality check.** QEMU cannot verify GPIO wiring, UART voltage levels,
+physical CTS signaling, or the SD-card firmware boot sequence. Hardware proof requires the
+actual card, wiring, and your driver, plus the course UART test. An
+unpowered Pi or an incomplete Quest 1 produces silence; no π output is
+expected until Quest 2. Debug Quest 1 in QEMU first.
+
+Checklist:
 
 - [ ] UART config verified — use the grading server's
   **"UART settings test [1690/2670 only]"** button. Real hardware is far
@@ -521,9 +649,8 @@ hardware path stays manual:
   `gpio_init` implements this *if you filled in the register offsets*.
 - [ ] Serial wiring (3.3 V TTL **only**): Pi pin 6 = GND, pin 8 (Pi TX) →
   adapter RX, pin 10 (Pi RX) → adapter TX; console at 115200 8N1.
-- [ ] SD card firmware setup (armstub/kernel files) — follow course staff's
-  instructions. The seminar demo image boots a stock Linux and does not
-  itself test your kernel; do not blindly reformat or replace files.
+- [ ] SD card per steps a–c above: course-approved firmware card, backed up,
+  `kernel8.img` + `armstub.bin` copied as files, `config.txt` reviewed.
 - [ ] Run on real hardware: your own Pi, the **"Run on hardware
   [1690/2670 only]"** grading-server button, or instructor office hours —
   early, not the last day.
@@ -552,6 +679,26 @@ hardware path stays manual:
   `kernel/init.rs` uses `include_bytes!` on `user/*.elf` at compile time.
 - Variadic ABI recap: pull `%c` as `c_int` (promoted), `%s` as
   `*const c_char`, `%p` as `*const c_void`; `args` must be `mut`.
+- Arithmetic: these development builds **panic on integer overflow**. C
+  unsigned arithmetic wraps; C signed overflow is undefined behavior.
+  The supplied pi port uses ordinary signed arithmetic, tested at its
+  configured digit count. In your own code, use `wrapping_*` only when
+  modular arithmetic is intended; `checked_*` and `saturating_*` have
+  different semantics. A panic before the UART works looks like a hang.
+- Calling into `unsafe` code: calling the provided `pi_main` from Rust
+  requires an `unsafe` block and exclusive access to its globals. The
+  bounded `load_elf` function itself is safe, but creating a slice over
+  chosen physical RAM and converting its returned raw entry address to a
+  callable function pointer require you to establish the safety invariants.
+- Function pointers: `entry as extern "C" fn() -> c_int` does **not**
+  compile. Converting a raw address to a function pointer requires an
+  explicit unsafe conversion such as `core::mem::transmute`. The
+  `VprintfFn` alias describes the trampoline's function type; it does not
+  perform a conversion or establish safety by itself.
+- Borrows: end your mutable borrow of the destination before calling the
+  loaded program. Its memory must remain reserved and valid throughout
+  execution. The program can mutate its own data, but the kernel must not
+  concurrently access it or load another program over it.
 
 ## Remaining work checklist (for you)
 
@@ -571,5 +718,9 @@ hardware path stays manual:
 - Course hardware info: <https://csci1670.github.io/hardware>
 - Serial/seminar notes: <https://csci1670.github.io/docs/seminar01>
 - Upstream C ELF loader: <https://github.com/csci1670/cs1670-f26-elfloader>
+- Raspberry Pi `config.txt` boot options (vendor docs):
+  <https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/config_txt/boot.adoc>
+  and legacy options incl. `kernel_address`/`init_uart_clock`:
+  <https://github.com/raspberrypi/documentation/blob/master/documentation/asciidoc/computers/legacy_config_txt/boot.adoc>
 
 *Handout text adapted from the course materials under CC BY 4.0.*

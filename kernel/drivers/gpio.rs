@@ -5,15 +5,12 @@ use crate::utils::{delay_cycles, mmio_read32, mmio_write32};
 
 // GPIO pin configuration registers (p. 90ff, §6.1)
 //
-// TODO: all of these are set to PERIPHERALS_BASE + 0x0; you will need to
-// adjust this with the correct offsets determined from the BCM2835 ARM
-// Peripherals datasheet.
 
 // GPIO Function Select Registers (GPFSELn): these select what function is
 // mapped to each GPIO pin.
 // See table on p. 102 and p. 91ff of datasheet.
-pub const GPFSEL0: usize = PERIPHERALS_BASE + 0x0; // pins 0-9
-pub const GPFSEL1: usize = PERIPHERALS_BASE + 0x0; // pins 10-19
+pub const GPFSEL0: usize = PERIPHERALS_BASE + 0x0020_0000; // pins 0-9
+pub const GPFSEL1: usize = PERIPHERALS_BASE + 0x0020_0004; // pins 10-19
 
 // GPIO Pin Up/Down Enable Register (GPPUD): this controls whether pins are
 // enabled for "pull-up" or "pull-down", which sets the default voltage level
@@ -21,12 +18,12 @@ pub const GPFSEL1: usize = PERIPHERALS_BASE + 0x0; // pins 10-19
 // See p. 90, §6.1 of datasheet. Note that addresses starting with 0x7E...
 // need translating to 0x3F... to be accessible to the CPU.
 // Register documentation for GPUUD on p. 100f, §6.1.
-pub const GPPUD: usize = PERIPHERALS_BASE + 0x0;
+pub const GPPUD: usize = PERIPHERALS_BASE + 0x0020_0094;
 // GPIO Pin Up/Down Enable Clock Registers (GPPUDCLKn): these control the
 // actually pull-up/pull-down state of the pins, based on the value set in
 // GPPUD. Make sure to read the text on p. 101 (§6.1) of the datasheet to
 // understand how to use GPUUD and GPPUDCLKn together correctly.
-pub const GPPUDCLK0: usize = PERIPHERALS_BASE + 0x0;
+pub const GPPUDCLK0: usize = PERIPHERALS_BASE + 0x0020_0098 ;
 
 // Configure and enable the GPIO pins for the PL011 UART device.
 pub fn gpio_init() {
